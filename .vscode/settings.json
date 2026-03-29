@@ -1,0 +1,14 @@
+{
+    "cspell.enabled": true,
+    "cspell.configFile": "./cspell.json",
+    "cspell.ignorePaths": [
+        "**/build/**",
+        "**/*.h",
+        "**/*.cpp"
+    ],
+    "cSpell.words": [
+        "кастомную",
+        "тултип",
+        "тултипа"
+    ]
+}

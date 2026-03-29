@@ -1,0 +1,13 @@
+[Unit]
+Description=Clevo Fan Control Daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/clevo-fan-control
+ExecStop=/usr/local/bin/clevo-fan-control stop
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

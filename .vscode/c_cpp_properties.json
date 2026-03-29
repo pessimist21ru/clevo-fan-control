@@ -1,0 +1,43 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/x86_64-linux-gnu/qt6/QtWidgets",
+                "/usr/include/x86_64-linux-gnu/qt6/QtCore",
+                "/usr/include/x86_64-linux-gnu/qt6/QtGui",
+                "/usr/include/KF6/**",
+                "/usr/include/x86_64-linux-gnu/qt6",
+                "/usr/include/x86_64-linux-gnu/qt5/QtDBus"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNIX",
+                "QT_CORE_LIB",
+                "QT_WIDGETS_LIB",
+                "QT_GUI_LIB",
+                "KF6_STATUSNOTIFIERITEM_LIB",
+                "KF6_WIDGETSADDONS_LIB",
+                "KF6_I18N_LIB",
+                "KF6_CORELIB_LIB",
+                "KF6_WINDOWSYSTEM_LIB",
+                "KF6_DBUSADDONS_LIB"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/**",
+                    "/usr/include/x86_64-linux-gnu/qt6/**",
+                    "/usr/include/KF6/**"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            }
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,33 @@
+{
+    "version": "0.2",
+    "language": "en",
+    "words": [
+        "QApplication",
+        "QMenu",
+        "QTimer",
+        "QString",
+        "QLabel",
+        "QIcon",
+        "QDebug",
+        "QMessageBox",
+        "QPixmap",
+        "QPainter",
+        "QPainterPath",
+        "KStatusNotifierItem"
+    ],
+    "ignoreRegExpList": [
+        "#include <.*>",  // Игнорировать строки с include
+        "//.*"           // Игнорировать комментарии
+    ],
+    "ignorePaths": [
+        "**/build/**",   // Игнорировать директорию сборки
+        "**/*.h",        // Если нужно игнорировать заголовки
+        "**/*.cpp"       // Если нужно игнорировать исходники
+    ],
+    "dictionaryDefinitions": [
+        {
+            "name": "qt-terms",
+            "path": "./qt-dictionary.txt"
+        }
+    ]
+}
