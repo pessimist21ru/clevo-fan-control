@@ -191,7 +191,8 @@ static int ambient_last_valid = 35;
 //============================================================================
 
 static void print_help(void);
-static void get_xdg_paths(void);
+static void print_warning(const char *msg);
+static void init_paths(void);
 static void ensure_directories(void);
 static void init_default_config(void);
 static int load_config(void);
@@ -287,62 +288,55 @@ static void print_help(void) {
     printf("  sudo %s log       # Start daemon with logging\n\n");
 }
 
+static void print_warning(const char *msg) {
+    printf("⚠️ %s\n", msg);
+}
+
 //============================================================================
-// XDG-совместимые пути
+// Инициализация путей (системные или пользовательские)
 //============================================================================
 
-static void get_xdg_paths(void) {
+static void init_paths(void) {
     uid_t uid = getuid();
     const char *sudo_user = getenv("SUDO_USER");
-    struct passwd *pw = NULL;
     
-    if (sudo_user && strlen(sudo_user) > 0) {
-        pw = getpwnam(sudo_user);
-    }
+    // Определяем режим работы
+    int is_service_mode = 0;
     
-    if (!pw) {
-        pw = getpwuid(uid);
-    }
-    
-    const char *home = pw ? pw->pw_dir : getenv("HOME");
-    if (!home) home = "/root";
-    
-    const char *username = pw ? pw->pw_name : "root";
-    
-    const char *xdg_config = getenv("XDG_CONFIG_HOME");
-    if (xdg_config && strstr(xdg_config, home)) {
-        snprintf(config_path, sizeof(config_path), "%s/clevo-fan-control", xdg_config);
+    // Если запущены от root и нет SUDO_USER - это служба
+    if (uid == 0 && (!sudo_user || strlen(sudo_user) == 0)) {
+        is_service_mode = 1;
+        printf("✓ Running in service mode (system-wide)\n");
+    } else if (uid == 0 && sudo_user && strlen(sudo_user) > 0) {
+        printf("✓ Running with sudo by user: %s\n", sudo_user);
     } else {
+        printf("✓ Running as user: %s\n", getenv("USER") ? getenv("USER") : "unknown");
+    }
+    
+    if (is_service_mode) {
+        // Системные пути для службы
+        snprintf(config_path, sizeof(config_path), "/etc/clevo-fan-control");
+        snprintf(log_dir, sizeof(log_dir), "/var/log/clevo-fan-control");
+        snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
+        snprintf(state_dir, sizeof(state_dir), "/var/lib/clevo-fan-control");
+        
+        printf("✓ Using system paths (service mode)\n");
+    } else {
+        // Пользовательские пути (при ручном запуске)
+        const char *home = getenv("HOME");
+        if (!home || strcmp(home, "/") == 0 || strcmp(home, "/root") == 0) {
+            home = "/tmp";
+            print_warning("Could not determine home directory, using /tmp");
+        }
+        
         snprintf(config_path, sizeof(config_path), "%s/.config/clevo-fan-control", home);
-    }
-    
-    const char *xdg_data = getenv("XDG_DATA_HOME");
-    if (xdg_data && strstr(xdg_data, home)) {
-        snprintf(log_dir, sizeof(log_dir), "%s/clevo-fan-control/logs", xdg_data);
-    } else {
         snprintf(log_dir, sizeof(log_dir), "%s/.local/share/clevo-fan-control/logs", home);
-    }
-    snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
-    
-    const char *xdg_state = getenv("XDG_STATE_HOME");
-    if (xdg_state && strstr(xdg_state, home)) {
-        snprintf(state_dir, sizeof(state_dir), "%s/clevo-fan-control", xdg_state);
-    } else {
+        snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
         snprintf(state_dir, sizeof(state_dir), "%s/.local/state/clevo-fan-control", home);
+        
+        printf("✓ Using user paths\n");
     }
     
-    uid_t euid = geteuid();
-    if (euid == 0 && pw) {
-        seteuid(pw->pw_uid);
-    }
-    
-    ensure_directories();
-    
-    if (euid == 0) {
-        seteuid(0);
-    }
-    
-    printf("✓ Using user: %s\n", username);
     printf("✓ Config path: %s\n", config_path);
     printf("✓ Log path: %s\n", log_dir);
 }
@@ -350,6 +344,7 @@ static void get_xdg_paths(void) {
 static void ensure_directories(void) {
     char tmp[512];
     
+    // Создаём директории рекурсивно
     strcpy(tmp, config_path);
     char *p = tmp;
     while (*p) {
@@ -392,14 +387,15 @@ static void ensure_directories(void) {
 //============================================================================
 
 static void init_default_config(void) {
+   
     struct FanCurvePoint cpu_default[] = {
-        {35, 0}, {40, 10}, {42, 20}, {45, 30}, {47, 40},
-        {50, 50}, {55, 60}, {60, 70}, {62, 80}, {65, 90}, {100, 100}
+        {30, 0}, {35, 5}, {40, 7}, {42, 10}, {45, 20}, {47, 35},
+        {50, 45}, {55, 55}, {60, 65}, {62, 75}, {65, 85}, {100, 100}
     };
-    
+
     struct FanCurvePoint gpu_default[] = {
-        {35, 0}, {40, 5}, {42, 10}, {45, 20}, {47, 30},
-        {50, 40}, {55, 50}, {60, 60}, {62, 70}, {65, 80}, {100, 90}
+        {30, 0}, {35, 10}, {40, 15}, {42, 20}, {45, 30}, {47, 40},
+        {50, 50}, {55, 60}, {60, 70}, {62, 80}, {65, 90}, {100, 100}
     };
     
     config.cpu_curve.num_points = sizeof(cpu_default) / sizeof(cpu_default[0]);
@@ -1376,7 +1372,8 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    get_xdg_paths();
+    // Инициализация путей (определяет режим: служба или пользователь)
+    init_paths();
     ensure_directories();
     init_default_config();
     load_config();
@@ -1384,6 +1381,16 @@ int main(int argc, char *argv[]) {
     if (help_mode) {
         print_help();
         return 0;
+    }
+    
+    // Если запущены как служба от root, проверяем что конфиг существует
+    if (getuid() == 0 && !getenv("SUDO_USER")) {
+        char test_path[512];
+        snprintf(test_path, sizeof(test_path), "%s/fan_curve.conf", config_path);
+        if (access(test_path, F_OK) != 0) {
+            print_warning("Configuration file not found, creating default");
+            save_config();
+        }
     }
     
     void *shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);

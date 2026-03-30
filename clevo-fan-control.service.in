@@ -1,13 +1,22 @@
 [Unit]
 Description=Clevo Fan Control Daemon
 After=multi-user.target
+Wants=network.target
 
 [Service]
 Type=simple
+User=root
+Group=root
+Environment=HOME=/root
+Environment=XDG_CONFIG_HOME=/etc
+Environment=XDG_DATA_HOME=/var/lib
+Environment=XDG_STATE_HOME=/var/lib
 ExecStart=/usr/local/bin/clevo-fan-control
 ExecStop=/usr/local/bin/clevo-fan-control stop
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
