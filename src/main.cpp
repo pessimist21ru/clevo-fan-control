@@ -14,7 +14,6 @@
 
  This utility was developed with assistance from DeepSeek AI.
  
- License: GPL v3
 ============================================================================
 */
 
@@ -194,7 +193,7 @@ static int ambient_last_valid = 35;
 //============================================================================
 
 static void print_help(void);
-static void get_xdg_paths(void);
+static void get_xdg_paths(int argc, char *argv[]);
 static void ensure_directories(void);
 static void init_default_config(void);
 static int load_config(void);
@@ -259,8 +258,9 @@ static void print_help(void) {
     printf("  Monitors CPU/GPU/NVMe temperatures and adjusts fan speeds\n");
     printf("  according to configurable fan curves.\n\n");
     printf("  NVMe protection:\n");
-    printf("    - 60°C: Fans → 90%%\n");
-    printf("    - 64°C: Fans → 100%% (overrides CPU/GPU control)\n\n");
+    printf("    - 55-60°C: Speed boost up to +20%%\n");
+    printf("    - ≥60°C: Fans → 90%% (overrides CPU/GPU control)\n");
+    printf("    - ≥64°C: Fans → 100%% (critical)\n\n");
     printf("AUTHOR:\n");
     printf("  %s\n", AUTHOR);
     printf("  Based on original work by %s\n", ORIGINAL_AUTHOR);
@@ -277,14 +277,32 @@ static void print_help(void) {
     printf("CONFIGURATION:\n");
     printf("  Config file: %s/fan_curve.conf\n", config_path);
     printf("  Log files:   %s/\n", log_dir);
-    printf("\nFAN CURVE FORMAT:\n");
+    printf("FAN CURVE FORMAT:\n");
     printf("  [CPU]\n");
-    printf("  35 0      # Below 35°C → 0%%\n");
-    printf("  40 10     # 35-40°C → 10%%\n");
+    printf("  35 0      # CPU curve (more conservative)\n");
+    printf("  40 5\n");
+    printf("  42 15\n");
+    printf("  45 26\n");
+    printf("  47 36\n");
+    printf("  50 47\n");
+    printf("  55 58\n");
+    printf("  57 68\n");
+    printf("  60 80\n");
+    printf("  62 90\n");
+    printf("  65 100\n");
     printf("  ...\n");
     printf("  [GPU]\n");
-    printf("  35 0\n");
-    printf("  40 5      # GPU curve is more conservative\n\n");
+    printf("  35 0      # GPU curve (more aggressive - affects NVMe)\n");
+    printf("  40 10\n");
+    printf("  42 20\n");
+    printf("  45 30\n");
+    printf("  47 40\n");
+    printf("  50 50\n");
+    printf("  55 60\n");
+    printf("  57 70\n");
+    printf("  60 80\n");
+    printf("  62 90\n");
+    printf("  65 100\n\n");
     printf("EXAMPLES:\n");
     printf("  sudo %s           # Start daemon (no test)\n", program_invocation_short_name);
     printf("  sudo %s test      # Run diagnostic test, then start daemon\n", program_invocation_short_name);
@@ -297,60 +315,101 @@ static void print_help(void) {
 // XDG-совместимые пути
 //============================================================================
 
-static void get_xdg_paths(void) {
-    uid_t uid = getuid();
-    const char *sudo_user = getenv("SUDO_USER");
-    struct passwd *pw = NULL;
+static void get_xdg_paths(int argc, char *argv[]) {
+    int system_mode = 0;
     
-    if (sudo_user && strlen(sudo_user) > 0) {
-        pw = getpwnam(sudo_user);
+    // Определяем режим работы
+    if (geteuid() == 0 && getenv("SUDO_USER") == NULL) {
+        system_mode = 1;
     }
     
-    if (!pw) {
-        pw = getpwuid(uid);
+    if (getenv("INVOCATION_ID") != NULL) {
+        system_mode = 1;
     }
     
-    const char *home = pw ? pw->pw_dir : getenv("HOME");
-    if (!home) home = "/root";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--system") == 0) {
+            system_mode = 1;
+            break;
+        }
+    }
     
-    const char *username = pw ? pw->pw_name : "root";
-    
-    const char *xdg_config = getenv("XDG_CONFIG_HOME");
-    if (xdg_config && strstr(xdg_config, home)) {
-        snprintf(config_path, sizeof(config_path), "%s/clevo-fan-control", xdg_config);
+    if (system_mode) {
+        // ========== СИСТЕМНЫЙ РЕЖИМ (для службы) ==========
+        snprintf(config_path, sizeof(config_path), "/etc/clevo-fan-control");
+        snprintf(log_dir, sizeof(log_dir), "/var/log/clevo-fan-control");
+        snprintf(state_dir, sizeof(state_dir), "/var/lib/clevo-fan-control");
+        snprintf(test_log_dir, sizeof(test_log_dir), "/var/log/clevo-fan-control");
+        
+        // Создаем системные директории (требуют root)
+        mkdir(config_path, 0755);
+        mkdir(log_dir, 0755);
+        mkdir(state_dir, 0755);
+        
+        printf("✓ Running in SYSTEM mode (service)\n");
+        printf("✓ Config: %s\n", config_path);
+        printf("✓ Logs: %s\n", log_dir);
+        
     } else {
-        snprintf(config_path, sizeof(config_path), "%s/.config/clevo-fan-control", home);
+        // ========== ПОЛЬЗОВАТЕЛЬСКИЙ РЕЖИМ (интерактивный) ==========
+        uid_t uid = getuid();
+        const char *sudo_user = getenv("SUDO_USER");
+        struct passwd *pw = NULL;
+        
+        if (sudo_user && strlen(sudo_user) > 0) {
+            pw = getpwnam(sudo_user);
+        }
+        
+        if (!pw) {
+            pw = getpwuid(uid);
+        }
+        
+        const char *home = pw ? pw->pw_dir : getenv("HOME");
+        if (!home) home = "/root";
+        
+        const char *username = pw ? pw->pw_name : "root";
+        
+        // XDG Base Directory Specification
+        const char *xdg_config = getenv("XDG_CONFIG_HOME");
+        if (xdg_config && strstr(xdg_config, home)) {
+            snprintf(config_path, sizeof(config_path), "%s/clevo-fan-control", xdg_config);
+        } else {
+            snprintf(config_path, sizeof(config_path), "%s/.config/clevo-fan-control", home);
+        }
+        
+        const char *xdg_data = getenv("XDG_DATA_HOME");
+        if (xdg_data && strstr(xdg_data, home)) {
+            snprintf(log_dir, sizeof(log_dir), "%s/clevo-fan-control/logs", xdg_data);
+        } else {
+            snprintf(log_dir, sizeof(log_dir), "%s/.local/share/clevo-fan-control/logs", home);
+        }
+        
+        const char *xdg_state = getenv("XDG_STATE_HOME");
+        if (xdg_state && strstr(xdg_state, home)) {
+            snprintf(state_dir, sizeof(state_dir), "%s/clevo-fan-control", xdg_state);
+        } else {
+            snprintf(state_dir, sizeof(state_dir), "%s/.local/state/clevo-fan-control", home);
+        }
+        
+        snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
+        
+        // Создаем директории с правами пользователя
+        uid_t euid = geteuid();
+        if (euid == 0 && pw) {
+            seteuid(pw->pw_uid);
+        }
+        
+        ensure_directories();
+        
+        if (euid == 0) {
+            seteuid(0);
+        }
+        
+        printf("✓ Running in USER mode (interactive)\n");
+        printf("✓ User: %s\n", username);
+        printf("✓ Config: %s\n", config_path);
+        printf("✓ Logs: %s\n", log_dir);
     }
-    
-    const char *xdg_data = getenv("XDG_DATA_HOME");
-    if (xdg_data && strstr(xdg_data, home)) {
-        snprintf(log_dir, sizeof(log_dir), "%s/clevo-fan-control/logs", xdg_data);
-    } else {
-        snprintf(log_dir, sizeof(log_dir), "%s/.local/share/clevo-fan-control/logs", home);
-    }
-    snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
-    
-    const char *xdg_state = getenv("XDG_STATE_HOME");
-    if (xdg_state && strstr(xdg_state, home)) {
-        snprintf(state_dir, sizeof(state_dir), "%s/clevo-fan-control", xdg_state);
-    } else {
-        snprintf(state_dir, sizeof(state_dir), "%s/.local/state/clevo-fan-control", home);
-    }
-    
-    uid_t euid = geteuid();
-    if (euid == 0 && pw) {
-        seteuid(pw->pw_uid);
-    }
-    
-    ensure_directories();
-    
-    if (euid == 0) {
-        seteuid(0);
-    }
-    
-    printf("✓ Using user: %s\n", username);
-    printf("✓ Config path: %s\n", config_path);
-    printf("✓ Log path: %s\n", log_dir);
 }
 
 static void ensure_directories(void) {
@@ -398,16 +457,17 @@ static void ensure_directories(void) {
 //============================================================================
 
 static void init_default_config(void) {
+
     struct FanCurvePoint cpu_default[] = {
-        {35, 0}, {40, 10}, {42, 20}, {45, 30}, {47, 40},
-        {50, 50}, {55, 60}, {60, 70}, {62, 80}, {65, 90}, {100, 100}
+        {35, 0}, {40, 5}, {42, 15}, {45, 26}, {47, 36},
+        {50, 47}, {55, 58}, {57, 68}, {60, 80}, {62, 90}, {65, 100}
     };
-    
+
     struct FanCurvePoint gpu_default[] = {
-        {35, 0}, {40, 5}, {42, 10}, {45, 20}, {47, 30},
-        {50, 40}, {55, 50}, {60, 60}, {62, 70}, {65, 80}, {100, 90}
+        {35, 0}, {40, 10}, {42, 20}, {45, 30}, {47, 40},
+        {50, 50}, {55, 60}, {57, 70}, {60, 80}, {62, 90}, {65, 100}
     };
-    
+
     config.cpu_curve.num_points = sizeof(cpu_default) / sizeof(cpu_default[0]);
     memcpy(config.cpu_curve.points, cpu_default, sizeof(cpu_default));
     
@@ -1526,7 +1586,7 @@ int main(int argc, char *argv[]) {
     int run_test = 0;
     int log_mode = 0;
     int help_mode = 0;
-    
+      
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "status") == 0) {
             status_mode = 1;
@@ -1542,7 +1602,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    get_xdg_paths();
+    get_xdg_paths(argc, argv);
     ensure_directories();
     init_default_config();
     load_config();

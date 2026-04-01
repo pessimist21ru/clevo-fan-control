@@ -104,13 +104,13 @@ RPM = 2156220 / ((high << 8) + low)
 | Temperature | Speed |
 |-------------|-------|
 | <35°C | 0% |
-| 35-40°C | 10% |
-| 40-42°C | 20% |
-| 42-45°C | 30% |
-| 45-47°C | 40% |
-| 47-50°C | 50% |
-| 50-55°C | 60% |
-| 55-60°C | 70% |
+| 40-42°C | 5% |
+| 42-45°C | 15% |
+| 45-47°C | 26% |
+| 47-50°C | 36% |
+| 50-55°C | 47% |
+| 55-57°C | 58% |
+| 57-60°C | 68% |
 | 60-62°C | 80% |
 | 62-65°C | 90% |
 | >65°C | 100% |
@@ -119,24 +119,42 @@ RPM = 2156220 / ((high << 8) + low)
 | Temperature | Speed |
 |-------------|-------|
 | <35°C | 0% |
-| 35-40°C | 5% |
-| 40-42°C | 10% |
-| 42-45°C | 20% |
-| 45-47°C | 30% |
-| 47-50°C | 40% |
-| 50-55°C | 50% |
-| 55-60°C | 60% |
+| 40-42°C | 5% |
+| 42-45°C | 10% |
+| 45-47°C | 20% |
+| 47-50°C | 30% |
+| 50-55°C | 40% |
+| 55-57°C | 50% |
+| 57-60°C | 60% |
 | 60-62°C | 70% |
 | 62-65°C | 80% |
-| >65°C | 90% |
+| >65°C | 100% |
 
-## XDG Directory Structure
+## Directory Structure
 
-| Type | Path |
-|------|------|
-| Configuration | `~/.config/clevo-fan-control/fan_curve.conf` |
-| Logs | `~/.local/share/clevo-fan-control/logs/` |
-| State | `~/.local/state/clevo-fan-control/` |
+```c
+// XDG Base Directory Specification
+config_path = "~/.config/clevo-fan-control"
+log_dir     = "~/.local/share/clevo-fan-control/logs"
+state_dir   = "~/.local/state/clevo-fan-control"
+test_log_dir = "~/.local/share/clevo-fan-control/logs"
+
+// Файлы
+fan_curve.conf          = "~/.config/clevo-fan-control/fan_curve.conf"
+clevo_fan_control_*.log = "~/.local/share/clevo-fan-control/logs/clevo_fan_control_*.log"
+fan_test_*.log          = "~/.local/share/clevo-fan-control/logs/fan_test_*.log"
+
+// FHS (Filesystem Hierarchy Standard)
+config_path = "/etc/clevo-fan-control"
+log_dir     = "/var/log/clevo-fan-control"
+state_dir   = "/var/lib/clevo-fan-control"
+test_log_dir = "/var/log/clevo-fan-control"
+
+// Файлы
+fan_curve.conf          = "/etc/clevo-fan-control/fan_curve.conf"
+clevo_fan_control_*.log = "/var/log/clevo-fan-control/clevo_fan_control_*.log"
+fan_test_*.log          = "/var/log/clevo-fan-control/fan_test_*.log"
+```
 
 ## Testing Commands
 
@@ -167,7 +185,7 @@ sudo clevo-fan-control help
 | `ec_gpu_temp_scanner.cpp` | Scan EC registers for GPU temperature |
 | `thermal_scanner.cpp` | Scan system thermal sensors |
 | `nvme_diag.cpp` | Diagnose NVMe temperature paths |
-| `gpu_fan_test_fixed.cpp` | Test GPU fan control |
+| `gpu_fan_test.cpp` | Test GPU fan control |
 
 ## Performance Optimizations
 
@@ -198,4 +216,4 @@ sudo clevo-fan-control help
 
 - Original project: [Agramian/clevo-fan-control](https://github.com/agramian/clevo-fan-control)
 - Development assistance: DeepSeek AI
-- Testing: Clevo N960KPx / Hasee TX9-CA5DP
+- Testing: Clevo N960KPx / Hasee TX9-CA5DP, Linux Debian 13 (Trixie)
