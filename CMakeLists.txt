@@ -56,7 +56,42 @@ if(INSTALL_SYSTEM_WIDE)
         "${CMAKE_BINARY_DIR}/clevo-fan-control.service"
         DESTINATION /etc/systemd/system
     )
+    
+    # Перезагрузка systemd после установки/обновления
+    install(CODE "
+        execute_process(
+            COMMAND systemctl daemon-reload
+            RESULT_VARIABLE RELOAD_RESULT
+            ERROR_QUIET
+        )
+    ")
 endif()
+
+# Специальная цель для быстрого обновления
+add_custom_target(upgrade
+    COMMAND ${CMAKE_COMMAND} -E echo "Upgrading clevo-fan-control..."
+    COMMAND sudo systemctl stop clevo-fan-control || true
+    COMMAND ${CMAKE_COMMAND} --build . --target install
+    COMMAND sudo systemctl daemon-reload
+    COMMAND sudo systemctl start clevo-fan-control
+    COMMAND ${CMAKE_COMMAND} -E echo "✓ Upgrade completed!"
+    COMMENT "Quick upgrade with service restart"
+)
+
+# Специальная цель для полной очистки
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling clevo-fan-control..."
+    COMMAND sudo systemctl stop clevo-fan-control || true
+    COMMAND sudo systemctl disable clevo-fan-control || true
+    COMMAND sudo rm -f /usr/local/bin/clevo-fan-control
+    COMMAND sudo rm -f /etc/systemd/system/clevo-fan-control.service
+    COMMAND sudo systemctl daemon-reload
+    COMMAND ${CMAKE_COMMAND} -E echo "✓ Uninstall completed!"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "Configuration preserved in /etc/clevo-fan-control/"
+    COMMAND ${CMAKE_COMMAND} -E echo "Logs preserved in /var/log/clevo-fan-control/"
+    COMMENT "Uninstall daemon (preserves config and logs)"
+)
 
 # Информационное сообщение
 message(STATUS "========================================")
@@ -70,4 +105,10 @@ message(STATUS "  mkdir build && cd build")
 message(STATUS "  cmake ..")
 message(STATUS "  make -j\$(nproc)")
 message(STATUS "  sudo make install")
+message(STATUS "")
+message(STATUS "Quick upgrade:")
+message(STATUS "  sudo make upgrade")
+message(STATUS "")
+message(STATUS "Uninstall:")
+message(STATUS "  sudo make uninstall")
 message(STATUS "========================================")

@@ -3,13 +3,7 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**",
-                "/usr/include/x86_64-linux-gnu/qt6/QtWidgets",
-                "/usr/include/x86_64-linux-gnu/qt6/QtCore",
-                "/usr/include/x86_64-linux-gnu/qt6/QtGui",
-                "/usr/include/KF6/**",
-                "/usr/include/x86_64-linux-gnu/qt6",
-                "/usr/include/x86_64-linux-gnu/qt5/QtDBus"
+                "${workspaceFolder}/**"
             ],
             "defines": [
                 "_DEBUG",
@@ -30,9 +24,7 @@
             "intelliSenseMode": "linux-gcc-x64",
             "browse": {
                 "path": [
-                    "${workspaceFolder}/**",
-                    "/usr/include/x86_64-linux-gnu/qt6/**",
-                    "/usr/include/KF6/**"
+                    "${workspaceFolder}/**"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""

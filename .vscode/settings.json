@@ -10,5 +10,65 @@
         "кастомную",
         "тултип",
         "тултипа"
+    ],
+    "VsCodeTaskButtons.showCounter": true,
+    "VsCodeTaskButtons.tasks": [
+        {
+            "label": "$(rocket) Quick Upgrade",
+            "task": "Quick Upgrade",
+            "tooltip": "🚀 Остановить, обновить и запустить службу",
+            "color": "warning"
+        },
+        {
+            "label": "$(beaker) Build",
+            "task": "Build (Debug)",
+            "tooltip": "🔨 Собрать проект в Debug режиме"
+        },
+        {
+            "label": "$(play) Run Test",
+            "task": "run_diagnostic_test",
+            "tooltip": "🧪 Запустить диагностический тест вентиляторов"
+        },
+        {
+            "label": "$(tools) Install",
+            "task": "Install (First Time)",
+            "tooltip": "📦 Первая установка"
+        },
+        {
+            "label": "$(trash) Uninstall",
+            "task": "Uninstall",
+            "tooltip": "🗑️ Удалить демон (конфиги сохранятся)"
+        },
+        {
+            "label": "$(refresh) Rebuild (Clean)",
+            "task": "Full Clean and Rebuild",
+            "tooltip": "🔄 Полная пересборка с нуля (очистка кэша CMake)",
+            "color": "default"
+        },
+        {
+            "label": "$(server-process) Service",
+            "tasks": [
+                {
+                    "label": "$(play) Start",
+                    "task": "Start Service",
+                    "description": "Запустить службу"
+                },
+                {
+                    "label": "$(debug-pause) Stop",
+                    "task": "Stop Service",
+                    "description": "Остановить службу"
+                },
+                {
+                    "label": "$(sync) Restart",
+                    "task": "Restart Service",
+                    "description": "Перезапустить службу"
+                },
+                {
+                    "label": "$(list) Status",
+                    "task": "Check Service Status",
+                    "description": "Показать статус"
+                }
+            ]
+        }
     ]
 }

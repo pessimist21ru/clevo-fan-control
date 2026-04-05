@@ -10,7 +10,7 @@
    https://github.com/agramian/clevo-fan-control
 
  Enhanced with intelligent fan control, diagnostic testing,
- and XDG-compliant paths.
+ and FHS/XDG-compliant paths.
 
  This utility was developed with assistance from DeepSeek AI.
  
@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,6 +120,7 @@ struct Config {
     int history_size;
     int update_interval_ms;
     int emergency_temp;
+    int journal_log_interval_sec;
 };
 
 struct MedianFilter {
@@ -164,11 +166,13 @@ struct SharedInfo {
 // Глобальные переменные
 //============================================================================
 
+static int interactive_mode = 0;  // 0 - служба (тихий режим), 1 - интерактивный
 static SharedInfo *share_info = NULL;
 static void *nvidia_handle = NULL;
 static int nvidia_nvml_available = 0;
 static pthread_t worker_thread;
 static FILE *log_file = NULL;
+static int file_logging_enabled = 0;  // Флаг: 0 - только journal, 1 - журнал + файл
 static FILE *test_log = NULL;
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct Config config;
@@ -193,8 +197,9 @@ static int ambient_last_valid = 35;
 //============================================================================
 
 static void print_help(void);
-static void get_xdg_paths(int argc, char *argv[]);
-static void ensure_directories(void);
+static void console_printf(const char* format, ...);
+static void create_path(const char* path);
+static void get_paths(int argc, char *argv[]);
 static void init_default_config(void);
 static int load_config(void);
 static int save_config(void);
@@ -249,82 +254,161 @@ static void run_diagnostic_test(void);
 //============================================================================
 
 static void print_help(void) {
-    printf("\n");
-    printf("╔══════════════════════════════════════════════════════════════════╗\n");
-    printf("║           Clevo Fan Control v%s                              ║\n", VERSION);
-    printf("╚══════════════════════════════════════════════════════════════════╝\n\n");
-    printf("DESCRIPTION:\n");
-    printf("  Intelligent fan control daemon for Clevo laptops (N960KPx).\n");
-    printf("  Monitors CPU/GPU/NVMe temperatures and adjusts fan speeds\n");
-    printf("  according to configurable fan curves.\n\n");
-    printf("  NVMe protection:\n");
-    printf("    - 55-60°C: Speed boost up to +20%%\n");
-    printf("    - ≥60°C: Fans → 90%% (overrides CPU/GPU control)\n");
-    printf("    - ≥64°C: Fans → 100%% (critical)\n\n");
-    printf("AUTHOR:\n");
-    printf("  %s\n", AUTHOR);
-    printf("  Based on original work by %s\n", ORIGINAL_AUTHOR);
-    printf("  %s\n\n", DEEPSEEK_CREDIT);
-    printf("USAGE:\n");
-    printf("  sudo %s [OPTIONS]\n\n", program_invocation_short_name);
-    printf("OPTIONS:\n");
-    printf("  (no options)  - Start daemon in normal operation mode\n");
-    printf("  test          - Run diagnostic fan test, then start daemon\n");
-    printf("  status        - Show current fan and temperature status\n");
-    printf("  stop          - Stop running daemon, return control to system\n");
-    printf("  log           - Start daemon with logging to file\n");
-    printf("  help          - Show this help message\n\n");
-    printf("CONFIGURATION:\n");
-    printf("  Config file: %s/fan_curve.conf\n", config_path);
-    printf("  Log files:   %s/\n", log_dir);
-    printf("FAN CURVE FORMAT:\n");
-    printf("  [CPU]\n");
-    printf("  35 0      # CPU curve (more conservative)\n");
-    printf("  40 5\n");
-    printf("  42 15\n");
-    printf("  45 26\n");
-    printf("  47 36\n");
-    printf("  50 47\n");
-    printf("  55 58\n");
-    printf("  57 68\n");
-    printf("  60 80\n");
-    printf("  62 90\n");
-    printf("  65 100\n");
-    printf("  ...\n");
-    printf("  [GPU]\n");
-    printf("  35 0      # GPU curve (more aggressive - affects NVMe)\n");
-    printf("  40 10\n");
-    printf("  42 20\n");
-    printf("  45 30\n");
-    printf("  47 40\n");
-    printf("  50 50\n");
-    printf("  55 60\n");
-    printf("  57 70\n");
-    printf("  60 80\n");
-    printf("  62 90\n");
-    printf("  65 100\n\n");
-    printf("EXAMPLES:\n");
-    printf("  sudo %s           # Start daemon (no test)\n", program_invocation_short_name);
-    printf("  sudo %s test      # Run diagnostic test, then start daemon\n", program_invocation_short_name);
-    printf("  sudo %s status    # Check current status\n", program_invocation_short_name);
-    printf("  sudo %s stop      # Stop daemon\n");
-    printf("  sudo %s log       # Start daemon with logging\n\n");
+    console_printf("\n");
+    console_printf("╔══════════════════════════════════════════════════════════════════╗\n");
+    console_printf("║           Clevo Fan Control v%s                              ║\n", VERSION);
+    console_printf("╚══════════════════════════════════════════════════════════════════╝\n\n");
+    console_printf("DESCRIPTION:\n");
+    console_printf("  Intelligent fan control daemon for Clevo laptops (N960KPx).\n");
+    console_printf("  Monitors CPU/GPU/NVMe temperatures and adjusts fan speeds\n");
+    console_printf("  according to configurable fan curves.\n\n");
+    console_printf("  NVMe protection:\n");
+    console_printf("    - 55-60°C: Speed boost up to +20%%\n");
+    console_printf("    - ≥60°C: Fans → 90%% (overrides CPU/GPU control)\n");
+    console_printf("    - ≥64°C: Fans → 100%% (critical)\n\n");
+    console_printf("AUTHOR:\n");
+    console_printf("  %s\n", AUTHOR);
+    console_printf("  Based on original work by %s\n", ORIGINAL_AUTHOR);
+    console_printf("  %s\n\n", DEEPSEEK_CREDIT);
+    console_printf("USAGE:\n");
+    console_printf("  sudo %s [OPTIONS]\n\n", program_invocation_short_name);
+    console_printf("OPTIONS:\n");
+    console_printf("  (no options)  - Start daemon in normal operation mode\n");
+    console_printf("  test          - Run diagnostic fan test, then start daemon\n");
+    console_printf("  status        - Show current fan and temperature status\n");
+    console_printf("  stop          - Stop running daemon, return control to system\n");
+    console_printf("  log           - Start daemon with logging to file\n");
+    console_printf("  help          - Show this help message\n\n");
+    console_printf("CONFIGURATION:\n");
+    console_printf("  Config file: %s/fan_curve.conf\n", config_path);
+    console_printf("  Log files:   %s/\n", log_dir);
+    console_printf("FAN CURVE FORMAT:\n");
+    console_printf("  [CPU]\n");
+    console_printf("  35 0      # CPU curve (more conservative)\n");
+    console_printf("  40 5\n");
+    console_printf("  42 15\n");
+    console_printf("  45 26\n");
+    console_printf("  47 36\n");
+    console_printf("  50 47\n");
+    console_printf("  55 58\n");
+    console_printf("  57 68\n");
+    console_printf("  60 80\n");
+    console_printf("  62 90\n");
+    console_printf("  65 100\n");
+    console_printf("  ...\n");
+    console_printf("  [GPU]\n");
+    console_printf("  35 0      # GPU curve (more aggressive - affects NVMe)\n");
+    console_printf("  40 10\n");
+    console_printf("  42 20\n");
+    console_printf("  45 30\n");
+    console_printf("  47 40\n");
+    console_printf("  50 50\n");
+    console_printf("  55 60\n");
+    console_printf("  57 70\n");
+    console_printf("  60 80\n");
+    console_printf("  62 90\n");
+    console_printf("  65 100\n\n");
+    console_printf("EXAMPLES:\n");
+    console_printf("  sudo %s           # Start daemon (no test)\n", program_invocation_short_name ? program_invocation_short_name : "clevo-fan-control");
+    console_printf("  sudo %s test      # Run diagnostic test, then start daemon\n", program_invocation_short_name ? program_invocation_short_name : "clevo-fan-control");
+    console_printf("  sudo %s status    # Check current status\n", program_invocation_short_name ? program_invocation_short_name : "clevo-fan-control");
+    console_printf("  sudo %s stop      # Stop daemon\n", program_invocation_short_name ? program_invocation_short_name : "clevo-fan-control");
+    console_printf("  sudo %s log       # Start daemon with logging\n\n", program_invocation_short_name ? program_invocation_short_name : "clevo-fan-control");
+}
+
+static void console_printf(const char* format, ...) {
+    if (!interactive_mode) return;  // В режиме службы ничего не выводим в консоль
+    
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    fflush(stdout);
 }
 
 //============================================================================
-// XDG-совместимые пути
+// XDG/FHS-совместимые пути
 //============================================================================
 
-static void get_xdg_paths(int argc, char *argv[]) {
+// Функция для безопасного создания пути
+static void create_path(const char* path) {
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "Warning: Attempt to create empty path\n");
+        return;
+    }
+    
+    char buf[512];
+    size_t len = strlen(path);
+    
+    if (len >= sizeof(buf)) {
+        fprintf(stderr, "Error: Path too long: %s\n", path);
+        return;
+    }
+    
+    strncpy(buf, path, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    
+    char *p = buf;
+    
+    // Пропускаем первый слеш (корневая директория)
+    if (*p == '/') {
+        p++;
+    }
+    
+    while (*p) {
+        if (*p == '/') {
+            *p = '\0';
+            
+            // Пропускаем создание корневой директории
+            if (buf[0] != '\0' && !(buf[0] == '/' && buf[1] == '\0')) {
+                struct stat st;
+                if (stat(buf, &st) == 0) {
+                    if (!S_ISDIR(st.st_mode)) {
+                        fprintf(stderr, "Warning: %s exists but is not a directory\n", buf);
+                    }
+                } else {
+                    if (mkdir(buf, 0755) != 0) {
+                        if (errno != EEXIST) {
+                            fprintf(stderr, "Warning: Cannot create directory %s: %s\n", 
+                                    buf, strerror(errno));
+                        }
+                    }
+                }
+            }
+            
+            *p = '/';
+        }
+        p++;
+    }
+    
+    // Создаём финальную директорию (только если путь не пустой)
+    if (buf[0] != '\0') {
+        struct stat st;
+        if (stat(buf, &st) == 0) {
+            if (!S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "Warning: %s exists but is not a directory\n", buf);
+            }
+        } else {
+            if (mkdir(buf, 0755) != 0) {
+                if (errno != EEXIST) {
+                    fprintf(stderr, "Warning: Cannot create directory %s: %s\n", 
+                            buf, strerror(errno));
+                }
+            }
+        }
+    }
+}
+
+static void get_paths(int argc, char *argv[]) {
     int system_mode = 0;
     
-    // Определяем режим работы
     if (geteuid() == 0 && getenv("SUDO_USER") == NULL) {
         system_mode = 1;
     }
     
     if (getenv("INVOCATION_ID") != NULL) {
         system_mode = 1;
+        interactive_mode = 0;  //запущено как служба
     }
     
     for (int i = 1; i < argc; i++) {
@@ -335,23 +419,22 @@ static void get_xdg_paths(int argc, char *argv[]) {
     }
     
     if (system_mode) {
-        // ========== СИСТЕМНЫЙ РЕЖИМ (для службы) ==========
         snprintf(config_path, sizeof(config_path), "/etc/clevo-fan-control");
         snprintf(log_dir, sizeof(log_dir), "/var/log/clevo-fan-control");
         snprintf(state_dir, sizeof(state_dir), "/var/lib/clevo-fan-control");
         snprintf(test_log_dir, sizeof(test_log_dir), "/var/log/clevo-fan-control");
         
-        // Создаем системные директории (требуют root)
-        mkdir(config_path, 0755);
-        mkdir(log_dir, 0755);
-        mkdir(state_dir, 0755);
+        create_path(config_path);
+        create_path(log_dir);
+        create_path(state_dir);
         
-        printf("✓ Running in SYSTEM mode (service)\n");
-        printf("✓ Config: %s\n", config_path);
-        printf("✓ Logs: %s\n", log_dir);
+        console_printf("✓ Running in SYSTEM mode (service)\n");
+        console_printf("✓ Config: %s\n", config_path);
+        console_printf("✓ Logs: %s\n", log_dir);
         
     } else {
-        // ========== ПОЛЬЗОВАТЕЛЬСКИЙ РЕЖИМ (интерактивный) ==========
+        interactive_mode = 1;  //интерактивный режим
+        
         uid_t uid = getuid();
         const char *sudo_user = getenv("SUDO_USER");
         struct passwd *pw = NULL;
@@ -369,7 +452,6 @@ static void get_xdg_paths(int argc, char *argv[]) {
         
         const char *username = pw ? pw->pw_name : "root";
         
-        // XDG Base Directory Specification
         const char *xdg_config = getenv("XDG_CONFIG_HOME");
         if (xdg_config && strstr(xdg_config, home)) {
             snprintf(config_path, sizeof(config_path), "%s/clevo-fan-control", xdg_config);
@@ -393,64 +475,26 @@ static void get_xdg_paths(int argc, char *argv[]) {
         
         snprintf(test_log_dir, sizeof(test_log_dir), "%s", log_dir);
         
-        // Создаем директории с правами пользователя
         uid_t euid = geteuid();
         if (euid == 0 && pw) {
             seteuid(pw->pw_uid);
         }
         
-        ensure_directories();
+        create_path(config_path);
+        create_path(log_dir);
+        create_path(state_dir);
         
         if (euid == 0) {
             seteuid(0);
         }
         
-        printf("✓ Running in USER mode (interactive)\n");
-        printf("✓ User: %s\n", username);
-        printf("✓ Config: %s\n", config_path);
-        printf("✓ Logs: %s\n", log_dir);
+        console_printf("✓ Running in USER mode (interactive)\n");
+        console_printf("✓ User: %s\n", username);
+        console_printf("✓ Config: %s\n", config_path);
+        console_printf("✓ Logs: %s\n", log_dir);
     }
 }
 
-static void ensure_directories(void) {
-    char tmp[512];
-    
-    strcpy(tmp, config_path);
-    char *p = tmp;
-    while (*p) {
-        if (*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
-        }
-        p++;
-    }
-    mkdir(config_path, 0755);
-    
-    strcpy(tmp, log_dir);
-    p = tmp;
-    while (*p) {
-        if (*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
-        }
-        p++;
-    }
-    mkdir(log_dir, 0755);
-    
-    strcpy(tmp, state_dir);
-    p = tmp;
-    while (*p) {
-        if (*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
-        }
-        p++;
-    }
-    mkdir(state_dir, 0755);
-}
 
 //============================================================================
 // Конфигурация
@@ -478,6 +522,7 @@ static void init_default_config(void) {
     config.history_size = HISTORY_SIZE;
     config.update_interval_ms = UPDATE_INTERVAL_US / 1000;
     config.emergency_temp = 85;
+    config.journal_log_interval_sec = 600;
 }
 
 static int load_config(void) {
@@ -508,6 +553,8 @@ static int load_config(void) {
         } else if (strcmp(p, "[GPU]") == 0) {
             section = 2;
             config.gpu_curve.num_points = 0;
+        } else if (strcmp(p, "[Settings]") == 0) {  // ← НОВАЯ СЕКЦИЯ
+            section = 3;
         } else if (section == 1 && config.cpu_curve.num_points < 20) {
             int temp, speed;
             if (sscanf(p, "%d %d", &temp, &speed) == 2) {
@@ -525,6 +572,14 @@ static int load_config(void) {
                     config.gpu_curve.points[config.gpu_curve.num_points].speed = speed;
                     config.gpu_curve.num_points++;
                 } else valid = 0;
+            }
+        } else if (section == 3) {
+            // Читаем параметры настроек
+            int interval;
+            if (sscanf(p, "journal_log_interval = %d", &interval) == 1) {
+                if (interval >= 5 && interval <= 3600) {  // от 5 секунд до 1 часа
+                    config.journal_log_interval_sec = interval;
+                }
             }
         }
     }
@@ -558,6 +613,11 @@ static int save_config(void) {
     for (int i = 0; i < config.gpu_curve.num_points; i++) {
         fprintf(f, "%d %d\n", config.gpu_curve.points[i].temp, config.gpu_curve.points[i].speed);
     }
+    
+    // ← ДОБАВИТЬ СЕКЦИЮ НАСТРОЕК
+    fprintf(f, "\n[Settings]\n");
+    fprintf(f, "# Interval for journal logging (seconds, 5-3600)\n");
+    fprintf(f, "journal_log_interval = %d\n", config.journal_log_interval_sec);
     
     fclose(f);
     return 1;
@@ -644,7 +704,7 @@ static int filter_temperature(int raw_temp, struct MedianFilter *filter,
 //============================================================================
 
 static void scan_ambient_sensors(void) {
-    printf("\n🔍 Scanning ambient temperature sensors...\n");
+    console_printf("\n🔍 Scanning ambient temperature sensors...\n");
     ambient_sensor_count = 0;
     
     for (int zone = 0; zone < 30 && ambient_sensor_count < AMBIENT_SENSORS_MAX; zone++) {
@@ -723,9 +783,9 @@ static void scan_ambient_sensors(void) {
         }
     }
     
-    printf("  Found %d sensors for ambient temperature\n", ambient_sensor_count);
+    console_printf("  Found %d sensors for ambient temperature\n", ambient_sensor_count);
     
-    printf("  Calibrating sensors (5 seconds)...");
+    console_printf("  Calibrating sensors (5 seconds)...");
     fflush(stdout);
     
     for (int sec = 0; sec < 5; sec++) {
@@ -742,11 +802,11 @@ static void scan_ambient_sensors(void) {
                 fclose(f);
             }
         }
-        printf(".");
+        console_printf(".");
         fflush(stdout);
         sleep(1);
     }
-    printf(" done.\n");
+    console_printf(" done.\n");
     
     int trusted_count = 0;
     for (int i = 0; i < ambient_sensor_count; i++) {
@@ -767,15 +827,15 @@ static void scan_ambient_sensors(void) {
             ambient_sensors[i].valid = 1;
             ambient_sensors[i].trusted = 1;
             trusted_count++;
-            printf("    ✓ %s: avg=%d°C, stable=%d°C - TRUSTED\n",
-                   ambient_sensors[i].name, avg, stability);
+            console_printf("    ✓ %s: avg=%d°C, stable=%d°C - TRUSTED\n",
+                ambient_sensors[i].name, avg, stability);
         } else {
-            printf("    ✗ %s: avg=%d°C, stable=%d°C - UNRELIABLE\n",
-                   ambient_sensors[i].name, avg, stability);
+            console_printf("    ✗ %s: avg=%d°C, stable=%d°C - UNRELIABLE\n",
+                ambient_sensors[i].name, avg, stability);
         }
     }
     
-    printf("  Trusted sensors for ambient: %d/%d\n", trusted_count, ambient_sensor_count);
+        console_printf("  Trusted sensors for ambient: %d/%d\n", trusted_count, ambient_sensor_count);
 }
 
 static int calculate_ambient_temp(void) {
@@ -939,9 +999,9 @@ static void nvidia_init(void) {
     }
     
     if (nvmlInit() != 0) {
-        dlclose(nvidia_handle);
-        nvidia_handle = NULL;
-        return;
+    dlclose(nvidia_handle);
+    nvidia_handle = NULL;
+    return;
     }
     
     void *device;
@@ -951,7 +1011,7 @@ static void nvidia_init(void) {
             share_info->nvidia_temp = (int)temp;
             share_info->nvidia_available = 1;
             nvidia_nvml_available = 1;
-            printf("✓ NVIDIA NVML detected: %d°C\n", share_info->nvidia_temp);
+            console_printf("✓ NVIDIA NVML detected: %d°C\n", share_info->nvidia_temp);
         }
     }
 }
@@ -984,15 +1044,11 @@ static void nvidia_update(void) {
 // NVMe функции
 //============================================================================
 
-//============================================================================
-// NVMe функции (оптимизированные - без popen в цикле)
-//============================================================================
-
 static char nvme0_path[256] = {0};
 static char nvme1_path[256] = {0};
 
 static void scan_nvme_disks(void) {
-    printf("\n💾 Scanning NVMe drives...\n");
+    console_printf("\n💾 Scanning NVMe drives...\n");
     
     share_info->nvme1_temp = 0;
     share_info->nvme2_temp = 0;
@@ -1053,7 +1109,7 @@ static void scan_nvme_disks(void) {
                             }
                             fclose(mf);
                         }
-                        printf("  Found NVMe%d: %s - %d°C\n", nvme_idx, model, temp);
+                        console_printf("  Found NVMe%d: %s - %d°C\n", nvme_idx, model, temp);
                         break;
                     }
                 }
@@ -1084,7 +1140,7 @@ static void scan_nvme_disks(void) {
                                     } else {
                                         share_info->nvme2_temp = temp;
                                     }
-                                    printf("  Found NVMe%d: %d°C\n", nvme_idx, temp);
+                                    console_printf("  Found NVMe%d: %d°C\n", nvme_idx, temp);
                                 }
                             }
                             fclose(f);
@@ -1097,9 +1153,9 @@ static void scan_nvme_disks(void) {
     }
     
     if (share_info->nvme1_temp == 0 && share_info->nvme2_temp == 0) {
-        printf("  No NVMe drives found\n");
+        console_printf("  No NVMe drives found\n");
     } else {
-        printf("  Found %d NVMe device(s)\n", 
+        console_printf("  Found %d NVMe device(s)\n", 
                (share_info->nvme1_temp > 0 ? 1 : 0) + (share_info->nvme2_temp > 0 ? 1 : 0));
     }
 }
@@ -1140,7 +1196,39 @@ static void update_nvme_temps(void) {
 // Логирование
 //============================================================================
 
+static void log_to_journal(const char* level, const char* format, ...) {
+    pthread_mutex_lock(&log_mutex);
+    va_list args;
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char time_str[32];
+    char buffer[1024];
+    
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+    
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    // Всегда пишем в stdout (идёт в journal для службы)
+    printf("[%s] %s: %s\n", time_str, level, buffer);
+    fflush(stdout);
+    
+    // Если включено файловое логирование - пишем в файл
+    if (file_logging_enabled && log_file) {
+        fprintf(log_file, "[%s] %s: %s\n", time_str, level, buffer);
+        fflush(log_file);
+    };
+    pthread_mutex_unlock(&log_mutex);
+}
+
 static void init_log_files(void) {
+    if (!file_logging_enabled) {
+        console_printf("✓ Logging to systemd journal only\n");
+        console_printf("  View logs: sudo journalctl -u clevo-fan-control -f\n");
+        return;
+    }
+    
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     char filename[512];
@@ -1159,7 +1247,8 @@ static void init_log_files(void) {
                 share_info->nvidia_available ? "NVML (NVIDIA driver)" : "EC register 0xFB");
         fprintf(log_file, "Format: Timestamp | CPU | GPU(primary) | GPU(EC) | AMBIENT | NVMe1/NVMe2 | CPU_FAN(RPM/%%) | GPU_FAN(RPM/%%)\n\n");
         fflush(log_file);
-        printf("📝 Log file: %s\n", filename);
+        console_printf("📝 File logging enabled: %s\n", filename);
+        console_printf("   Logs also available via: sudo journalctl -u clevo-fan-control -f\n");
     }
     
     snprintf(filename, sizeof(filename), "%s/fan_test_%04d%02d%02d_%02d%02d%02d.log",
@@ -1173,38 +1262,44 @@ static void init_log_files(void) {
         fprintf(test_log, "Start time: %s", ctime(&now));
         fprintf(test_log, "Test duration per step: %d seconds\n\n", TEST_STEP_DURATION);
         fflush(test_log);
-        printf("📝 Test log file: %s\n", filename);
+        console_printf("📝 Test log file: %s\n", filename);
     }
 }
 
 static void log_sensor_data(void) {
-    if (!log_file) return;
-    
-    pthread_mutex_lock(&log_mutex);
-    
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     
     int gpu_primary = share_info->nvidia_available ? share_info->nvidia_temp : share_info->gpu_temp_filtered;
     
-    fprintf(log_file, "[%02d:%02d:%02d] ", 
-            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
-    fprintf(log_file, "CPU:%d | GPU:%d | GPU_EC:%d | AMB:%d | NVMe:%d/%d | ",
+    char log_line[1024];
+    snprintf(log_line, sizeof(log_line),
+            "CPU:%d | GPU:%d | GPU_EC:%d | AMB:%d | NVMe:%d/%d | FAN_CPU:%d/%d%% | FAN_GPU:%d/%d%% | %s",
             share_info->cpu_temp_filtered,
             gpu_primary,
             share_info->gpu_temp_raw,
             share_info->ambient_temp,
             share_info->nvme1_temp,
-            share_info->nvme2_temp);
-    fprintf(log_file, "FAN_CPU:%d/%d%% | FAN_GPU:%d/%d%% | %s\n",
+            share_info->nvme2_temp,
             share_info->cpu_fan.rpms,
             share_info->cpu_fan.duty,
             share_info->gpu_fan.rpms,
             share_info->gpu_fan.duty,
             share_info->reason);
     
-    fflush(log_file);
-    pthread_mutex_unlock(&log_mutex);
+    // Логирование в systemd journal (с интервалом из конфига)
+    static time_t last_journal_log = 0;
+    if (last_journal_log == 0 || difftime(now, last_journal_log) >= config.journal_log_interval_sec) {
+        log_to_journal("INFO", "%s", log_line);
+        last_journal_log = now;
+    }
+    
+    // Файловое логирование (всегда, если включено)
+    if (file_logging_enabled && log_file) {
+        fprintf(log_file, "[%02d:%02d:%02d] %s\n",
+                tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec, log_line);
+        fflush(log_file);
+    }
 }
 
 static void log_test_result(const char* test_name, int cpu_rpm, int gpu_rpm, int cpu_duty, int gpu_duty) {
@@ -1212,11 +1307,17 @@ static void log_test_result(const char* test_name, int cpu_rpm, int gpu_rpm, int
     
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
+    char log_line[512];
     
-    fprintf(test_log, "[%02d:%02d:%02d] %-45s CPU: %4d RPM (%2d%%) | GPU: %4d RPM (%2d%%)\n",
-            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec,
-            test_name, cpu_rpm, cpu_duty, gpu_rpm, gpu_duty);
+    snprintf(log_line, sizeof(log_line), "%-45s CPU: %4d RPM (%2d%%) | GPU: %4d RPM (%2d%%)",
+             test_name, cpu_rpm, cpu_duty, gpu_rpm, gpu_duty);
+    
+    fprintf(test_log, "[%02d:%02d:%02d] %s\n",
+            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec, log_line);
     fflush(test_log);
+    
+    // Также пишем в journal
+    log_to_journal("TEST", "%s", log_line);
 }
 
 //============================================================================
@@ -1334,7 +1435,7 @@ static void smart_control_update(void) {
 //============================================================================
 
 static void test_fan_pair(int cpu_speed, int gpu_speed, const char* description) {
-    printf("  %s... ", description);
+    console_printf("  %s... ", description);
     fflush(stdout);
     
     ec_write_both_fans(cpu_speed, gpu_speed);
@@ -1344,14 +1445,14 @@ static void test_fan_pair(int cpu_speed, int gpu_speed, const char* description)
     log_test_result(description, share_info->cpu_fan.rpms, share_info->gpu_fan.rpms,
                     share_info->cpu_fan.duty, share_info->gpu_fan.duty);
     
-    printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
+    console_printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
            share_info->cpu_fan.rpms, share_info->cpu_fan.duty,
            share_info->gpu_fan.rpms, share_info->gpu_fan.duty);
 }
 
 static void test_fan_pair_phase(int cpu_start, int gpu_start, int cpu_end, int gpu_end, const char* description) {
-    printf("\n  %s\n", description);
-    printf("  ┌─────────────────────────────────────────────────────────────────┐\n");
+    console_printf("\n  %s\n", description);
+    console_printf("  ┌─────────────────────────────────────────────────────────────────┐\n");
     
     int cpu_step = (cpu_end - cpu_start) / 10;
     int gpu_step = (gpu_end - gpu_start) / 10;
@@ -1369,7 +1470,7 @@ static void test_fan_pair_phase(int cpu_start, int gpu_start, int cpu_end, int g
         snprintf(step_desc, sizeof(step_desc), "  Шаг %d/%d: CPU=%d%% GPU=%d%%", 
                  i, 10, cpu_speed, gpu_speed);
         
-        printf("%s... ", step_desc);
+        console_printf("%s... ", step_desc);
         fflush(stdout);
         
         ec_write_both_fans(cpu_speed, gpu_speed);
@@ -1379,15 +1480,15 @@ static void test_fan_pair_phase(int cpu_start, int gpu_start, int cpu_end, int g
         log_test_result(step_desc, share_info->cpu_fan.rpms, share_info->gpu_fan.rpms,
                         share_info->cpu_fan.duty, share_info->gpu_fan.duty);
         
-        printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
+        console_printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
                share_info->cpu_fan.rpms, share_info->cpu_fan.duty,
                share_info->gpu_fan.rpms, share_info->gpu_fan.duty);
     }
-    printf("  └─────────────────────────────────────────────────────────────────┘\n");
+    console_printf("  └─────────────────────────────────────────────────────────────────┘\n");
 }
 
 static void test_single_fan(int fan_type, int speed, const char* description) {
-    printf("  %s... ", description);
+    console_printf("  %s... ", description);
     fflush(stdout);
     
     if (fan_type == 1) {
@@ -1403,24 +1504,24 @@ static void test_single_fan(int fan_type, int speed, const char* description) {
     log_test_result(description, share_info->cpu_fan.rpms, share_info->gpu_fan.rpms,
                     share_info->cpu_fan.duty, share_info->gpu_fan.duty);
     
-    printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
+    console_printf("CPU: %4d RPM (%2d%%), GPU: %4d RPM (%2d%%)\n",
            share_info->cpu_fan.rpms, share_info->cpu_fan.duty,
            share_info->gpu_fan.rpms, share_info->gpu_fan.duty);
 }
 
 static void run_diagnostic_test(void) {
-    printf("\n");
-    printf("╔══════════════════════════════════════════════════════════════════╗\n");
-    printf("║                    FAN DIAGNOSTIC TEST                          ║\n");
-    printf("╚══════════════════════════════════════════════════════════════════╝\n\n");
+    console_printf("\n");
+    console_printf("╔══════════════════════════════════════════════════════════════════╗\n");
+    console_printf("║                    FAN DIAGNOSTIC TEST                          ║\n");
+    console_printf("╚══════════════════════════════════════════════════════════════════╝\n\n");
     
     test_fan_pair_phase(0, 100, 100, 0, "Фаза 1A: Противофазный тест (CPU↑ GPU↓)");
     test_fan_pair_phase(100, 0, 0, 100, "Фаза 1B: Противофазный тест (CPU↓ GPU↑)");
     test_fan_pair_phase(0, 0, 100, 100, "Фаза 2: Синхронный тест (CPU↑ GPU↑)");
     test_fan_pair_phase(100, 100, 0, 0, "Фаза 3: Синхронный тест (CPU↓ GPU↓)");
     
-    printf("\nФаза 4: Пошаговый тест CPU вентилятора (GPU в AUTO режиме)\n");
-    printf("────────────────────────────────────────────────────────────────────\n");
+    console_printf("\nФаза 4: Пошаговый тест CPU вентилятора (GPU в AUTO режиме)\n");
+    console_printf("────────────────────────────────────────────────────────────────────\n");
     
     int speeds[] = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
     for (int i = 0; i < 11; i++) {
@@ -1429,8 +1530,8 @@ static void run_diagnostic_test(void) {
         test_single_fan(1, speeds[i], desc);
     }
     
-    printf("\nФаза 5: Пошаговый тест GPU вентилятора (CPU в AUTO режиме)\n");
-    printf("────────────────────────────────────────────────────────────────────\n");
+    console_printf("\nФаза 5: Пошаговый тест GPU вентилятора (CPU в AUTO режиме)\n");
+    console_printf("────────────────────────────────────────────────────────────────────\n");
     
     for (int i = 0; i < 11; i++) {
         char desc[64];
@@ -1438,8 +1539,8 @@ static void run_diagnostic_test(void) {
         test_single_fan(2, speeds[i], desc);
     }
     
-    printf("\nФаза 6: Тест на конфликты - быстрые переключения\n");
-    printf("────────────────────────────────────────────────────────────────────\n");
+    console_printf("\nФаза 6: Тест на конфликты - быстрые переключения\n");
+    console_printf("────────────────────────────────────────────────────────────────────\n");
     
     int test_speeds[] = {0, 50, 100, 50, 0, 100, 0, 50, 100};
     for (int i = 0; i < 9; i++) {
@@ -1449,13 +1550,13 @@ static void run_diagnostic_test(void) {
         test_fan_pair(test_speeds[i], 100 - test_speeds[i], desc);
     }
     
-    printf("\n🔄 Завершение теста: возврат в AUTO режим...\n");
+    console_printf("\n🔄 Завершение теста: возврат в AUTO режим...\n");
     ec_set_auto_mode();
     sleep(2);
     
     ec_read_fan_status();
-    printf("\n✅ Диагностический тест завершен!\n");
-    printf("   Результаты сохранены в %s/\n", test_log_dir);
+    console_printf("\n✅ Диагностический тест завершен!\n");
+    console_printf("   Результаты сохранены в %s/\n", test_log_dir);
 }
 
 //============================================================================
@@ -1463,22 +1564,24 @@ static void run_diagnostic_test(void) {
 //============================================================================
 
 static void print_status(void) {
-    printf("\n╔════════════════════════════════════════════════════════════╗\n");
-    printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
-    printf("╚════════════════════════════════════════════════════════════╝\n\n");
+    if (!interactive_mode) return;  // В режиме службы не выводим статус в консоль
     
-    printf("GPU Temperature Source: %s\n", 
+    console_printf("\n╔════════════════════════════════════════════════════════════╗\n");
+    console_printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
+    console_printf("╚════════════════════════════════════════════════════════════╝\n\n");
+    
+    console_printf("GPU Temperature Source: %s\n", 
            share_info->nvidia_available ? "NVML (NVIDIA driver)" : "EC register 0xFB");
-    printf("Config: %s/fan_curve.conf\n", config_path);
+    console_printf("Config: %s/fan_curve.conf\n", config_path);
     
-    printf("\nCurrent Status:\n");
-    printf("  CPU: %d°C → Fan: %d RPM (%d%%)\n", 
+    console_printf("\nCurrent Status:\n");
+    console_printf("  CPU: %d°C → Fan: %d RPM (%d%%)\n", 
            share_info->cpu_temp_filtered,
            share_info->cpu_fan.rpms,
            share_info->cpu_fan.duty);
     
     int gpu_display = share_info->nvidia_available ? share_info->nvidia_temp : share_info->gpu_temp_filtered;
-    printf("  GPU: %d°C → Fan: %d RPM (%d%%)\n",
+    console_printf("  GPU: %d°C → Fan: %d RPM (%d%%)\n",
            gpu_display,
            share_info->gpu_fan.rpms,
            share_info->gpu_fan.duty);
@@ -1492,14 +1595,14 @@ static void print_status(void) {
         nvme_warning = " ⚠️ WARNING!";
     }
     
-    printf("  NVMe: %d°C / %d°C%s\n", 
+    console_printf("  NVMe: %d°C / %d°C%s\n", 
            share_info->nvme1_temp, 
            share_info->nvme2_temp,
            nvme_warning);
-    printf("  Ambient: %d°C\n", share_info->ambient_temp);
-    printf("  Mode: %s\n", share_info->smart_mode ? "SMART" : "PASSIVE");
-    printf("  Target: CPU=%d%% GPU=%d%%\n", share_info->cpu_target, share_info->gpu_target);
-    printf("  %s\n", share_info->reason);
+    console_printf("  Ambient: %d°C\n", share_info->ambient_temp);
+    console_printf("  Mode: %s\n", share_info->smart_mode ? "SMART" : "PASSIVE");
+    console_printf("  Target: CPU=%d%% GPU=%d%%\n", share_info->cpu_target, share_info->gpu_target);
+    console_printf("  %s\n", share_info->reason);
 }
 
 //============================================================================
@@ -1507,7 +1610,7 @@ static void print_status(void) {
 //============================================================================
 
 static void* worker_thread_func(void*) {
-    printf("Worker thread started\n");
+    console_printf("Worker thread started\n");
     
     int last_cpu_target = -1;
     int last_gpu_target = -1;
@@ -1560,7 +1663,7 @@ static void* worker_thread_func(void*) {
         usleep(config.update_interval_ms * 1000);
     }
     
-    printf("Worker thread stopped\n");
+    console_printf("Worker thread stopped\n");
     return NULL;
 }
 
@@ -1569,10 +1672,25 @@ static void* worker_thread_func(void*) {
 //============================================================================
 
 static void signal_handler(int sig) {
-    printf("\nShutting down...\n");
+    console_printf("\nShutting down...\n");
+    
     if (share_info) {
         share_info->exit = 1;
         ec_set_auto_mode();
+    }
+    
+    // Закрываем NVML handle, если он открыт
+    if (nvidia_handle) {
+        typedef int (*nvmlShutdown_t)(void);
+        nvmlShutdown_t nvmlShutdown = (nvmlShutdown_t)dlsym(nvidia_handle, "nvmlShutdown");
+        
+        if (nvmlShutdown) {
+            nvmlShutdown();
+        }
+        
+        dlclose(nvidia_handle);
+        nvidia_handle = NULL;
+        nvidia_nvml_available = 0;
     }
 }
 
@@ -1586,6 +1704,12 @@ int main(int argc, char *argv[]) {
     int run_test = 0;
     int log_mode = 0;
     int help_mode = 0;
+
+    if (getenv("INVOCATION_ID") != NULL) {
+        interactive_mode = 0;  // Запущено как служба
+    } else {
+        interactive_mode = 1;  // Интерактивный режим
+    }
       
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "status") == 0) {
@@ -1602,8 +1726,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    get_xdg_paths(argc, argv);
-    ensure_directories();
+    get_paths(argc, argv);
     init_default_config();
     load_config();
     
@@ -1617,6 +1740,7 @@ int main(int argc, char *argv[]) {
         perror("mmap");
         return 1;
     }
+
     share_info = (SharedInfo*)shm;
     memset(share_info, 0, sizeof(SharedInfo));
     share_info->smart_mode = 1;
@@ -1626,7 +1750,7 @@ int main(int argc, char *argv[]) {
     share_info->ambient_temp = 35;
     
     if (!ec_init()) {
-        printf("❌ Cannot access EC ports. Run with sudo.\n");
+        console_printf("❌ Cannot access EC ports. Run with sudo.\n");
         return 1;
     }
     
@@ -1640,35 +1764,35 @@ int main(int argc, char *argv[]) {
         update_nvme_temps();
         ec_read_fan_status();
         
-        printf("\n╔════════════════════════════════════════════════════════════╗\n");
-        printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
-        printf("╚════════════════════════════════════════════════════════════╝\n\n");
+        console_printf("\n╔════════════════════════════════════════════════════════════╗\n");
+        console_printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
+        console_printf("╚════════════════════════════════════════════════════════════╝\n\n");
         
-        printf("Config: %s/fan_curve.conf\n", config_path);
-        printf("Logs: %s/\n", log_dir);
-        printf("GPU Temperature Source: %s\n", 
-               share_info->nvidia_available ? "NVML (NVIDIA driver)" : "EC register 0xFB");
-        printf("\nCurrent Status:\n");
-        printf("  CPU: %d°C → Fan: %d RPM (%d%%)\n", 
-               share_info->cpu_temp_raw,
-               share_info->cpu_fan.rpms,
-               share_info->cpu_fan.duty);
+        console_printf("Config: %s/fan_curve.conf\n", config_path);
+        console_printf("Logs: %s/\n", log_dir);
+        console_printf("GPU Temperature Source: %s\n", 
+            share_info->nvidia_available ? "NVML (NVIDIA driver)" : "EC register 0xFB");
+        console_printf("\nCurrent Status:\n");
+        console_printf("  CPU: %d°C → Fan: %d RPM (%d%%)\n", 
+            share_info->cpu_temp_raw,
+            share_info->cpu_fan.rpms,
+            share_info->cpu_fan.duty);
         
         int gpu_display = share_info->nvidia_available ? share_info->nvidia_temp : share_info->gpu_temp_raw;
-        printf("  GPU: %d°C → Fan: %d RPM (%d%%)\n",
-               gpu_display,
-               share_info->gpu_fan.rpms,
-               share_info->gpu_fan.duty);
+        console_printf("  GPU: %d°C → Fan: %d RPM (%d%%)\n",
+            gpu_display,
+            share_info->gpu_fan.rpms,
+            share_info->gpu_fan.duty);
         
-        printf("  NVMe: %d°C / %d°C\n", share_info->nvme1_temp, share_info->nvme2_temp);
-        printf("  Ambient: %d°C\n", share_info->ambient_temp);
-        printf("  Mode: %s\n", share_info->smart_mode ? "SMART" : "PASSIVE");
+        console_printf("  NVMe: %d°C / %d°C\n", share_info->nvme1_temp, share_info->nvme2_temp);
+        console_printf("  Ambient: %d°C\n", share_info->ambient_temp);
+        console_printf("  Mode: %s\n", share_info->smart_mode ? "SMART" : "PASSIVE");
         
         return 0;
     }
     
     if (stop_daemon) {
-        printf("Stopping daemon...\n");
+        console_printf("Stopping daemon...\n");  // ← заменить printf на console_printf
         share_info->exit = 1;
         ec_set_auto_mode();
         return 0;
@@ -1688,66 +1812,82 @@ int main(int argc, char *argv[]) {
     
     pthread_create(&worker_thread, NULL, worker_thread_func, NULL);
     
-    printf("\n╔════════════════════════════════════════════════════════════╗\n");
-    printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
-    printf("║           Intelligent fan control daemon                  ║\n");
-    printf("╚════════════════════════════════════════════════════════════╝\n\n");
-    
-    printf("✓ EC I/O permissions granted\n");
-    printf("✓ %s\n", share_info->nvidia_available ? "NVIDIA NVML detected" : "Using EC register 0xFB for GPU temp");
-    printf("✓ Ambient sensors: %d trusted\n", ambient_sensor_count);
-    printf("✓ Config loaded from: %s/fan_curve.conf\n", config_path);
-    printf("✓ Log directory: %s/\n", log_dir);
-    printf("✓ Filtering: Median window=%d, History=%d samples\n", config.median_window, config.history_size);
-    printf("✓ NVMe protection: %d°C warning, %d°C critical\n", NVME_WARNING_TEMP, NVME_CRITICAL_TEMP);
-    
+    console_printf("\n╔════════════════════════════════════════════════════════════╗\n");
+    console_printf("║           Clevo Fan Control v%s                      ║\n", VERSION);
+    console_printf("║           Intelligent fan control daemon                  ║\n");
+    console_printf("╚════════════════════════════════════════════════════════════╝\n\n");
+
+    console_printf("✓ EC I/O permissions granted\n");
+    console_printf("✓ %s\n", share_info->nvidia_available ? "NVIDIA NVML detected" : "Using EC register 0xFB for GPU temp");
+    console_printf("✓ Ambient sensors: %d trusted\n", ambient_sensor_count);
+    console_printf("✓ Config loaded from: %s/fan_curve.conf\n", config_path);
+    console_printf("✓ Log directory: %s/\n", log_dir);
+    console_printf("✓ Filtering: Median window=%d, History=%d samples\n", config.median_window, config.history_size);
+    console_printf("✓ NVMe protection: %d°C warning, %d°C critical\n", NVME_WARNING_TEMP, NVME_CRITICAL_TEMP);
+
     if (run_test) {
         run_diagnostic_test();
     } else {
-        printf("\nℹ️  Starting without diagnostic test (use 'test' option to run test)\n");
+        console_printf("\nℹ️  Starting without diagnostic test (use 'test' option to run test)\n");
         ec_set_auto_mode();
         sleep(1);
     }
-    
+
     share_info->diagnostic_mode = 0;
     share_info->smart_mode = 1;
     ec_set_auto_mode();
     sleep(1);
-    
-    printf("\n");
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║           NORMAL OPERATION MODE                           ║\n");
-    printf("║           Intelligent fan control active                  ║\n");
-    printf("╚════════════════════════════════════════════════════════════╝\n\n");
-    
+
+    console_printf("\n");
+    console_printf("╔════════════════════════════════════════════════════════════╗\n");
+    console_printf("║           NORMAL OPERATION MODE                           ║\n");
+    console_printf("║           Intelligent fan control active                  ║\n");
+    console_printf("╚════════════════════════════════════════════════════════════╝\n\n");
+
     if (log_mode) {
-        printf("📊 LOGGING MODE: All data will be saved to log file\n");
-        printf("   Log file: %s/clevo_fan_control_*.log\n", log_dir);
-        printf("   Press Ctrl+C to stop logging and daemon\n\n");
+        file_logging_enabled = 1;
+        console_printf("📁 FILE LOGGING MODE ACTIVE\n");
+        console_printf("   Logs are written to: %s/clevo_fan_control_*.log\n", log_dir);
+        console_printf("   Logs are also available via: sudo journalctl -u clevo-fan-control -f\n\n");
     } else {
-        printf("Commands:\n");
-        printf("  %s status     - Show current status\n", argv[0]);
-        printf("  %s stop       - Stop daemon\n", argv[0]);
-        printf("  %s test       - Run diagnostic test, then start\n", argv[0]);
-        printf("  %s log        - Start daemon with logging\n", argv[0]);
-        printf("  %s help       - Show help\n", argv[0]);
-        printf("\nPress Ctrl+C to stop daemon\n\n");
+        console_printf("📝 Logging to systemd journal only\n");
+        console_printf("   View logs: sudo journalctl -u clevo-fan-control -f\n\n");
+        if (interactive_mode) {
+            console_printf("Commands:\n");
+            console_printf("  %s status     - Show current status\n", argv[0]);
+            console_printf("  %s stop       - Stop daemon\n", argv[0]);
+            console_printf("  %s test       - Run diagnostic test, then start\n", argv[0]);
+            console_printf("  %s log        - Start daemon with file logging\n", argv[0]);
+            console_printf("  %s help       - Show help\n", argv[0]);
+            console_printf("\nPress Ctrl+C to stop daemon\n\n");
+        }
     }
-    
+
     print_status();
-    
-    while (!share_info->exit) {
-        sleep(1);
-        static int counter = 0;
-        if (++counter >= 60 && !log_mode) {
-            counter = 0;
-            print_status();
+
+        // ========== ГЛАВНЫЙ ЦИКЛ ОЖИДАНИЯ ==========
+    if (interactive_mode) {
+        // В интерактивном режиме показываем статус каждую минуту
+        while (!share_info->exit) {
+            sleep(1);
+            static int counter = 0;
+            if (++counter >= 60 && !log_mode) {
+                counter = 0;
+                print_status();
+            }
+        }
+    } else {
+        // В режиме службы просто ждём сигнал
+        while (!share_info->exit) {
+            sleep(1);
         }
     }
     
+    // Ожидание завершения рабочего потока
     pthread_join(worker_thread, NULL);
     ec_set_auto_mode();
     
+    // Закрытие лог-файлов
     if (log_file) {
         time_t now = time(NULL);
         fprintf(log_file, "\nDaemon stopped: %s", ctime(&now));
@@ -1757,6 +1897,7 @@ int main(int argc, char *argv[]) {
         fclose(test_log);
     }
     
-    printf("Daemon stopped\n");
+    console_printf("Daemon stopped\n");
+
     return 0;
 }

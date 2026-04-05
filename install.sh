@@ -309,22 +309,52 @@ check_tuxedo_drivers() {
 install_tuxedo_drivers() {
     print_step "Установка драйверов Tuxedo"
     
-    local driver_script="$SCRIPT_DIR/update-tuxedo-drivers.sh"
+    local driver_script="$SCRIPT_DIR/drivers/update-tuxedo-drivers.sh"
+    
+    # Создаём директорию drivers, если её нет
+    mkdir -p "$SCRIPT_DIR/drivers"
+    
+    # Копируем скрипт в директорию drivers, если он ещё не там
+    if [ -f "$SCRIPT_DIR/update-tuxedo-drivers.sh" ] && [ ! -f "$driver_script" ]; then
+        cp "$SCRIPT_DIR/update-tuxedo-drivers.sh" "$driver_script"
+        chmod +x "$driver_script"
+        print_info "Скрипт драйверов скопирован в ./drivers/"
+    fi
     
     if [ -f "$driver_script" ]; then
         print_info "Запуск скрипта установки драйверов..."
-        chmod +x "$driver_script"
         bash "$driver_script"
         print_success "Драйверы Tuxedo установлены"
     else
         print_warning "Скрипт update-tuxedo-drivers.sh не найден"
-        print_info "Установка драйверов из репозитория..."
+        print_info "Установка драйверов из репозитория в ./drivers/..."
         
-        local repo_dir="/tmp/tuxedo-drivers"
+        local drivers_dir="$SCRIPT_DIR/drivers"
+        local repo_dir="$drivers_dir/tuxedo-drivers"
         
-        git clone https://github.com/tuxedocomputers/tuxedo-drivers.git "$repo_dir"
+        mkdir -p "$drivers_dir"
+        
+        if [ -d "$repo_dir" ]; then
+            print_info "Обновление существующего репозитория..."
+            cd "$repo_dir"
+            if [ -n "$SUDO_USER" ]; then
+                sudo -u "$SUDO_USER" git pull
+            else
+                git pull
+            fi
+        else
+            print_info "Клонирование репозитория..."
+            if [ -n "$SUDO_USER" ]; then
+                sudo -u "$SUDO_USER" git clone https://github.com/tuxedocomputers/tuxedo-drivers.git "$repo_dir"
+            else
+                git clone https://github.com/tuxedocomputers/tuxedo-drivers.git "$repo_dir"
+            fi
+            cd "$repo_dir"
+        fi
         
         cd "$repo_dir"
+        
+        print_info "Сборка модулей..."
         make clean
         make
         make -C /lib/modules/$(uname -r)/build M=$(pwd) modules_install
@@ -344,9 +374,9 @@ tuxedo_io
 EOF
         
         cd "$SCRIPT_DIR"
-        rm -rf "$repo_dir"
         
         print_success "Драйверы Tuxedo установлены"
+        print_info "Исходники драйверов сохранены в: $repo_dir"
     fi
     
     print_info "Загрузка модулей..."

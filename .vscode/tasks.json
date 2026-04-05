@@ -22,9 +22,9 @@
             }
         },
         {
-            "label": "Build and Set Permissions",
+            "label": "Build (Debug)",
             "type": "shell",
-            "command": "bash -c 'cmake --build build -- -j$(nproc) && sudo chown root ./build/clevo-fan-control && sudo chmod u+s ./build/clevo-fan-control'",
+            "command": "cmake --build build -- -j$(nproc)",
             "group": {
                 "kind": "build",
                 "isDefault": false
@@ -42,9 +42,9 @@
             }
         },
         {
-            "label": "Clean Build Directory Root",
+            "label": "Build with Debug Info",
             "type": "shell",
-            "command": "sudo rm -rf build && mkdir build",
+            "command": "cmake -DENABLE_DEBUG=ON -S . -B build-debug && cmake --build build-debug -- -j$(nproc)",
             "group": {
                 "kind": "build",
                 "isDefault": false
@@ -52,6 +52,63 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Install (First Time)",
+            "type": "shell",
+            "command": "sudo make install && sudo chmod 755 ../build",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Quick Upgrade",
+            "type": "shell",
+            "command": "sudo make upgrade && sudo chmod 755 ../build",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Uninstall",
+            "type": "shell",
+            "command": "sudo make uninstall",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "problemMatcher": [],
             "presentation": {
                 "echo": true,
                 "reveal": "always",
@@ -69,11 +126,177 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             },
+            "problemMatcher": [],
             "presentation": {
                 "echo": true,
                 "reveal": "always",
                 "panel": "shared"
             }
+        },
+        {
+            "label": "Clean Debug Build Directory",
+            "type": "shell",
+            "command": "rm -rf build-debug",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Full Clean and Rebuild",
+            "type": "shell",
+            "command": "rm -rf build && mkdir build && cmake -S . -B build && cmake --build build -- -j$(nproc)",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Check Service Status",
+            "type": "shell",
+            "command": "sudo systemctl status clevo-fan-control",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "View Journal Logs",
+            "type": "shell",
+            "command": "sudo journalctl -u clevo-fan-control -f",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Start Service",
+            "type": "shell",
+            "command": "sudo systemctl start clevo-fan-control",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Stop Service",
+            "type": "shell",
+            "command": "sudo systemctl stop clevo-fan-control",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Restart Service",
+            "type": "shell",
+            "command": "sudo systemctl restart clevo-fan-control",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Show Current Status (Daemon)",
+            "type": "shell",
+            "command": "clevo-fan-control status",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+            
+        },
+        {
+            "label": "run_diagnostic_test",
+            "type": "shell",
+            "command": "sudo clevo-fan-control test",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
         }
+}
     ]
 }

@@ -7,6 +7,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Определение директории скрипта
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Определение домашней директории пользователя
 if [ -n "$SUDO_USER" ]; then
     USER_HOME=$(getent passwd $SUDO_USER | cut -d: -f6)
@@ -14,22 +17,34 @@ else
     USER_HOME=$HOME
 fi
 
-REPO_DIR="$(pwd)/tuxedo-drivers"
+# Директория для драйверов (внутри проекта)
+DRIVERS_DIR="$SCRIPT_DIR/drivers"
+REPO_DIR="$DRIVERS_DIR/tuxedo-drivers"
 REPO_URL="https://github.com/tuxedocomputers/tuxedo-drivers.git"
 
 echo "=== Tuxedo Drivers Installer/Updater ==="
 echo ""
 
+# Создание директории для драйверов
+mkdir -p "$DRIVERS_DIR"
+
 # Клонирование или обновление репозитория
-cd "$USER_HOME"
+cd "$DRIVERS_DIR"
 if [ -d "$REPO_DIR" ]; then
-    echo "✓ Обновление репозитория..."
+    echo "✓ Обновление репозитория в $REPO_DIR..."
     cd "$REPO_DIR"
-    sudo -u "$SUDO_USER" git pull
+    if [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" git pull
+    else
+        git pull
+    fi
 else
-    echo "✓ Клонирование репозитория..."
-    mkdir -p "$(dirname "$REPO_DIR")"
-    sudo -u "$SUDO_USER" git clone "$REPO_URL" "$REPO_DIR"
+    echo "✓ Клонирование репозитория в $REPO_DIR..."
+    if [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" git clone "$REPO_URL" "$REPO_DIR"
+    else
+        git clone "$REPO_URL" "$REPO_DIR"
+    fi
     cd "$REPO_DIR"
 fi
 
@@ -94,4 +109,5 @@ cat /etc/modules-load.d/tuxedo-drivers.conf
 
 echo ""
 echo "=== Установка завершена ==="
+echo "Драйверы сохранены в: $REPO_DIR"
 echo "Для применения изменений перезагрузитесь: reboot"
